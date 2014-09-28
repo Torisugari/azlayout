@@ -280,17 +280,17 @@ static const char _kDummyDumpcairo[] = "";
 void dumpcairo(cairo_t* aC, int aLine, const char* aInfo = _kDummyDumpcairo) {
   cairo_status_t cs = cairo_status(aC);
   if (cs) {
-    fprintf(stderr, "L%d: cairo_status:%s %s\n", aLine, cairo_status_to_string(cs), aInfo);
+    fprintf(stderr, "L%d: cairo_status:%s %s\n",
+            aLine, cairo_status_to_string(cs), aInfo);
     exit(-1);
   }
-  assert(!cs);
 }
 #define AZ_DUMP_CAIRO(_c_,_m_) dumpcairo(_c_,__LINE__,_m_)
 
 // @return false  If there's no room in this rectangle to draw a new glyph.
 
 enum lineState {
-  LINE_STATE_NEW_LINE       = 1 ,// We don't know anything. Just a initial state.
+  LINE_STATE_NEW_LINE        = 1,// We don't know anything. Just a initial state.
   LINE_STATE_SOFT_LINEBREAK,     // Linebreak because of too long to render.
   LINE_STATE_HARD_LINEBREAK,     // Linebreak because of '\n', '\r' "<br>" etc.
   LINE_STATE_END_OF_COLUMN,      // No blank area for the next linebreak.
@@ -1061,19 +1061,21 @@ printLine(Font* aFont, cairo_t* aCa,
 #endif
         }
       }
+      point_t advance;
+      advance.mX = (aHBPos[index + aWritten].x_advance * fontsize) / 64.;
+      advance.mY = -1. * (aHBPos[index + aWritten].y_advance * fontsize) / 64.;
+
       if (em && (em->mRange.mStart < tmpDataOffset)) {
         uint32_t cluster = aHBInfo[aWritten + index].cluster;
         if ((em->mRange.mStart) <= cluster &&
             cluster < (em->mRange.mEnd)) {
-          double emHeight = -1. * (aHBPos[index + aWritten].y_advance * fontsize) / 64.;
           rect_t emRect(point_t(aRect.mEnd.mX, origin.mY),
-                        aRubyFont->mSize, emHeight);
+                        aRubyFont->mSize, advance.mY);
           printRuby(aRubyFont, aCa, u8R"(丶)", emRect);
         }
       }
 
-      origin.mX += (aHBPos[index + aWritten].x_advance * fontsize) / 64.;
-      origin.mY -= (aHBPos[index + aWritten].y_advance * fontsize) / 64.;
+      origin += advance;
 #ifdef DEBUG
       // Note that codepoint is 4bytes (i.e. UCS4) while fonts support
       // only 2-bytes index (0-65535).
@@ -1254,7 +1256,8 @@ bool printString(Font* aFont, const Page& aPage,
   uint32_t glyphLength(0);
   uint32_t glyphWritten(0);
   hb_glyph_info_t* hbInfo = hb_buffer_get_glyph_infos(buff, &glyphLength);
-  hb_glyph_position_t* hbPos = hb_buffer_get_glyph_positions(buff, &glyphLength);
+  hb_glyph_position_t* hbPos =
+    hb_buffer_get_glyph_positions(buff, &glyphLength);
   glyphLength--; // We don't want to render the last glyph.
 
   int _loopcount(0);
@@ -1311,7 +1314,9 @@ bool printString(Font* aFont, const Page& aPage,
       cairo_surface_flush(cs);
       aOffset += delta;
 #ifdef DEBUG
-//      std::cerr << "Left:" << std::endl << (aString.c_str() + hbInfo[glyphWritten].cluster) << std::endl;
+      std::cerr << "Left:" << std::endl 
+                << (aString.c_str() + hbInfo[glyphWritten].cluster)
+                << std::endl;
       dumpPoint (delta);
 #endif
       delta = point_t(0., 0.);
@@ -1477,7 +1482,7 @@ int main (int argc, char* argv[]) {
   }
 
   azlayout::Page page(width, height,
-                     marginLeft, marginTop, marginRight, marginBottom);
+                      marginLeft, marginTop, marginRight, marginBottom);
   azlayout::KihonHanmen kihonHanmen(page.innerRect(), columnGap, columns);
 
   azlayout::point_t offset(0., 0.);

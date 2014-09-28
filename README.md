@@ -13,7 +13,7 @@ Aozorabunko parser and vertical text layout engine to output PDF/SVG files.
 ####The original ziped Shift-JIS version is:
 [https://github.com/aozorabunko/aozorabunko/blob/359e6e18a0c5fbacbaa1613f6a3e777dacb927f9/cards/000148/files/789_ruby_5639.zip](https://github.com/aozorabunko/aozorabunko/blob/359e6e18a0c5fbacbaa1613f6a3e777dacb927f9/cards/000148/files/789_ruby_5639.zip)
 
-[I am a cat](http://en.wikipedia.org/wiki/I_Am_a_Cat) written in 1906 by [Natsume Sōseki](http://en.wikipedia.org/wiki/Natsume_S%C5%8Dseki).
+"[I am a cat](http://en.wikipedia.org/wiki/I_Am_a_Cat)" written in 1906 by [Natsume Sōseki](http://en.wikipedia.org/wiki/Natsume_S%C5%8Dseki).
 
 
 ###Output files
