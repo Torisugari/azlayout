@@ -668,8 +668,8 @@ public:
       std::sort(mForbiddenLastGlyphs.begin(), mForbiddenLastGlyphs.end());
       resize();
     }
-    return std::binary_search(mForbiddenFirstGlyphs.begin(),
-                              mForbiddenFirstGlyphs.end(), aCodepoint);
+    return std::binary_search(mForbiddenLastGlyphs.begin(),
+                              mForbiddenLastGlyphs.end(), aCodepoint);
   }
 
   ~Font() {
