@@ -187,7 +187,8 @@ public:
   bool provide(rect_t& aFace, bool aAutoFeed = true) {
     aFace = mColumns[mIndex];
 #ifdef DEBUG
-    std::cerr << ".width(): " << aFace.width() << " .height() " << aFace.height() << "\n";
+    std::cerr << ".width(): " << aFace.width() << " .height() " 
+              << aFace.height() << "\n";
 #endif
     mIndex++;
     bool isLastColumn = (mColumns.size() == mIndex);
