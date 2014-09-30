@@ -1,0 +1,5 @@
+#/bin/bash
+# When you want to run this script, first install "spidermonky" and type
+# "make vo" on your build directory.
+
+js vo.js > ${PROJECT_SOURCE_DIR}/src/vo/utr50.cpp

@@ -1,0 +1,45 @@
+print(read("${PROJECT_SOURCE_DIR}/src/vo/utr50header.txt"));
+var ur50 = read("${PROJECT_SOURCE_DIR}/src/vo/VerticalOrientation-13.txt")
+             .split("\n");
+var ranges = [];
+var lastRange = [0, 0, "R"];
+var count = 0;
+
+function stringifyRange(aRange) {
+  return "{0x" + aRange[0].toString(16) + ", 0x" + aRange[1].toString(16) +
+         ", " + aRange[2] + "}";
+}
+
+print("static const Item gTable[] = {")
+for (var i in ur50) {
+  var tmp = ur50[i];
+  if ('#' == tmp.charAt(0) || !tmp) {
+    continue;
+  }
+  var range = [0, 0, "R"];
+  if (/^([0-9A-F]+)\.\.([0-9A-F]+)\s\;\s([URTur]+)$/.test(tmp)) {
+    range = [parseInt(RegExp.$1, 16), parseInt(RegExp.$2, 16), RegExp.$3];
+  }
+  else if (/^([0-9A-F]+)\s\;\s([URTur]+)$/.test(tmp)){
+    range = [parseInt(RegExp.$1, 16), parseInt(RegExp.$1, 16), RegExp.$2];
+  }
+  else {
+    continue;
+  }
+
+  if (lastRange[2] == range[2]) {
+    lastRange[1] = range[1];
+  }
+  else {
+    print("  " + stringifyRange(lastRange) + ",");
+    lastRange = range;
+    count++;
+  }
+}
+
+print("  " + stringifyRange(lastRange) + "\n};\n");
+count++;
+print("static const unsigned int gCount = " + count + ";");
+
+print(read("${PROJECT_SOURCE_DIR}/src/vo/utr50footer.txt"));
+

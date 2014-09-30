@@ -44,6 +44,7 @@
 #include <assert.h>
 #include <algorithm>
 
+#include "vo/utr50.h"
 namespace azlayout {
 
 struct point_t {
@@ -324,6 +325,28 @@ struct RubyList : public SelectionList {
   RubyList* mNext;
 };
 
+enum progressionProperty {
+  TEXT_PROPERTY_DEFAULT = 0, // Too little infomation to decide.
+  TEXT_PROPERTY_VERTICAL,    // No rotation.
+  TEXT_PROPERTY_HORIZONTAL,  // Rotate 90deg clockwise.
+  TEXT_PROPERTY_TATENAKAYOKO // kainda ligature, 2 halfwidth makes 1 fullwidth.
+};
+
+enum connectionProperty {
+  TEXT_PROPERTY_INLINE,    // Reuse the previous line.
+  TEXT_PROPERTY_LINEBREAK, // Reuse the page, but start at a new line.
+  TEXT_PROPERTY_PAGEBREAK  // Start with a brand new page.
+};
+
+struct TextPropertyList : public SelectionList {
+  TextPropertyList(){}
+  progressionProperty mProgression;
+  connectionProperty mConnection;
+  uint32_t mIndent;
+  bool mPageFeed;
+  TextPropertyList* mNext;
+};
+
 uint32_t backtrackHan(const char* aParentDocument, uint32_t aLength, 
                       uint32_t aDirty) {
   hb_buffer_t* buff = hb_buffer_create();
@@ -390,6 +413,7 @@ parseEmphasisTag(const std::string& aTag, SelectionList*& aSelection,
 
 void
 parseStrictAozora2(std::string& aString, std::string& aParentDocument,
+                   TextPropertyList* aTP,
                    RubyList*& aRuby, SelectionList*& aEm) {
 
   //case 0x0000FF5C: // '｜';
@@ -402,6 +426,11 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
   //case 0x0000FF1F: // '？';
   //case 0x00002049: // '⁉';
   //case 0x0000203C: // '‼';
+
+  TextPropertyList* tp = aTP;
+  tp->mNext = nullptr;
+  tp->mRange.mStart = aParentDocument.size();
+  tp->mProgression = TEXT_PROPERTY_VERTICAL;
 
   hb_buffer_t* buff = hb_buffer_create();
 
@@ -542,6 +571,51 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
       // To do ... what?
     }
     else {
+      utr50::property property = utr50::getProperty(hbInfo[i].codepoint);
+      switch (property) {
+      case utr50::R:
+        if (0x0a != hbInfo[i].codepoint &&
+            0x2026 != hbInfo[i].codepoint &&
+            0x2015 != hbInfo[i].codepoint &&
+            TEXT_PROPERTY_VERTICAL == tp->mProgression) {
+          uint32_t pos = aParentDocument.size();
+          int j = i - 1;
+          while (j > -1 && utr50::Tr == utr50::getProperty(hbInfo[j].codepoint)) {
+            uint32_t length = hbInfo[j + 1].cluster - hbInfo[j].cluster;
+            if (pos >= length &&
+                0 == strncmp(aString.c_str() + hbInfo[j].cluster,
+                             aParentDocument.c_str() + pos - length, length)) {
+              pos -= length;
+            }
+            else {
+              break;
+            }
+            j--;
+          }
+          tp->mRange.mEnd = pos;
+          tp->mNext = new TextPropertyList();
+          tp = tp->mNext;
+          tp->mNext = nullptr;
+          tp->mRange.mStart = pos;
+          tp->mProgression = TEXT_PROPERTY_HORIZONTAL;
+        }
+        break;
+      case utr50::Tu:
+      case utr50::U:
+        if (0x0a !=hbInfo[i].codepoint && TEXT_PROPERTY_HORIZONTAL == tp->mProgression) {
+          tp->mRange.mEnd = aParentDocument.size();
+          tp->mNext = new TextPropertyList();
+          tp = tp->mNext;
+          tp->mNext = nullptr;
+          tp->mRange.mStart = aParentDocument.size();
+          tp->mProgression = TEXT_PROPERTY_VERTICAL;
+        }
+        break;
+      case utr50::Tr:
+        break;
+      }
+      if (TEXT_PROPERTY_VERTICAL == tp->mProgression && utr50::R == property) {
+      }
       aParentDocument.append(ptr, byteLen);
       notSelected += byteLen;
     }
@@ -552,6 +626,7 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
   hb_buffer_destroy(buff);
   aRuby = firstRuby;
   aEm = firstEm;
+  tp->mRange.mEnd = aParentDocument.size();
 }
 
 class Font {
@@ -813,17 +888,10 @@ lineState
 printLine(Font* aFont, cairo_t* aCa,
           const std::string& aString,
           hb_glyph_info_t* aHBInfo, hb_glyph_position_t* aHBPos,
-          uint32_t aGlyphLength, uint32_t& aWritten,
+          uint32_t aGlyphLength, uint32_t& aWritten, uint32_t aDocumentOffset,
           const rect_t& aRect,
           point_t& aDelta,
           RubyList*& aRuby, Font* aRubyFont, SelectionList*& aEm) {
-#if 0
-  std::cerr << "aGlyphLength" << aGlyphLength << "\n";
-  std::cerr << "aWritten" << aWritten << "\n";
-  std::string test("this is a pen");
-  std::cerr << test.c_str() << "\n";
-  std::cerr << test.append("cstr", 2) << "\n";
-#endif
   aGlyphLength -= aWritten;
 
   const double fontsize = aFont->mSize;
@@ -860,53 +928,6 @@ printLine(Font* aFont, cairo_t* aCa,
   }
 
   // Process Kinsoku (禁則)
-#if 0
-  static const char utf8IdeographicFullStop[]       = u8R"(。)";
-  static const char utf8IdeographicComma[]          = u8R"(、)";
-  static const char utf8LeftCornerBracket[]         = u8R"(「)";
-  static const char utf8RightCornerBracket[]        = u8R"(」)";
-  static const char utf8LeftParenthesis[]           = u8R"(()";
-  static const char utf8RightParenthesis[]          = u8R"())";
-  static const char utf8FullWidthLeftParenthesis[]  = u8R"(（)";
-  static const char utf8FullWidthRightParenthesis[] = u8R"(）)";
-
-  if (LINE_STATE_SOFT_LINEBREAK == state && numGlyphs > 1) {
-    // XXX If we do have UTF32/UCS4 code (uint32_t), we can use, instead of
-    //     strcmp(...), switch(){} statememnt which would be greatly effecient.
-    //     However I'm not too sure about the cost converting from utf8 to ucs4.
-    //     I guess harfbuzz already did it. Should we do conversion here again?
-    //
-    //     Right after calling |hb_buffer_add_utf8(...)|,
-    //     aHBInfo[index]->codepoint shows the UCS4 value, and
-    //     |hb_buffer_get_content_type(buff)| indicates UNICODE.
-    //     On the other hand, after calling |hb_shape(...)|, the content_type
-    //     is GLYPH, that is, codepoint became simply font's index which
-    //     is of no use on reinterpriting text data like Kinsoku. 
-    //
-    //     One of the smart ways is to create a table in Font() class.
-#define STRNCMP(_V_,_L_) (strncmp(_V_,_L_,(sizeof(_L_)-1))==0)
-    // Note that we are sure numGluphs is non-zero.
-    const char* lastChar = document + aHBInfo[aWritten + numGlyphs - 1].cluster;
-    if (STRNCMP(lastChar, utf8LeftParenthesis) ||
-        STRNCMP(lastChar, utf8FullWidthLeftParenthesis) ||
-        STRNCMP(lastChar, utf8LeftCornerBracket)) {
-      std::cerr << "###FORBIDDEN! LAST:strcmp" << std::endl;
-
-        numGlyphs--;
-    }
-    else if (numGlyphs < aGlyphLength) {
-      const char* nextChar = document + aHBInfo[aWritten + numGlyphs].cluster;
-      if (STRNCMP(nextChar, utf8IdeographicFullStop) ||
-          STRNCMP(nextChar, utf8IdeographicComma) ||
-          STRNCMP(nextChar, utf8RightParenthesis) ||
-          STRNCMP(nextChar, utf8FullWidthRightParenthesis) ||
-          STRNCMP(nextChar, utf8RightCornerBracket)) {
-      std::cerr << "###FORBIDDEN! First:strcmp" << std::endl;
-        numGlyphs++;
-      }
-    }
-  }
-#else
   if (LINE_STATE_SOFT_LINEBREAK == state && numGlyphs > 1) {
     // This line's last Glyph.
     const uint32_t& lastGlyph = aHBInfo[aWritten + numGlyphs - 1].codepoint;
@@ -920,7 +941,6 @@ printLine(Font* aFont, cairo_t* aCa,
       numGlyphs++;
     }
   }
-#endif
 
   if (numGlyphs == 0) {
     if (aGlyphLength == 0) {
@@ -1021,7 +1041,7 @@ printLine(Font* aFont, cairo_t* aCa,
       // Set ruby
       // XXX Reduce "if" statements.
       if (ruby && (ruby->mRange.mStart < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster;
+        uint32_t cluster = aHBInfo[aWritten + index].cluster + aDocumentOffset;
         if (isInRuby) {
           if (ruby->mRange.mEnd <= cluster) {
             rubyRect.mEnd.mX = aRect.mEnd.mX + aRubyFont->mSize;
@@ -1036,7 +1056,7 @@ printLine(Font* aFont, cairo_t* aCa,
 
       // Set em
       if (ruby && (ruby->mRange.mStart < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster;
+        uint32_t cluster = aHBInfo[aWritten + index].cluster + aDocumentOffset;
         if (!isInRuby) {
           if (ruby->mRange.mStart <= cluster) {
             rubyRect.mStart = point_t(aRect.mEnd.mX, origin.mY);
@@ -1046,7 +1066,7 @@ printLine(Font* aFont, cairo_t* aCa,
       }
 
       if (em && (em->mRange.mStart < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster;
+        uint32_t cluster = aHBInfo[aWritten + index].cluster + aDocumentOffset;
         while (em && em->mRange.mEnd <= cluster) {
           em = em->mNext;
 #ifdef DEBUG
@@ -1067,7 +1087,7 @@ printLine(Font* aFont, cairo_t* aCa,
       advance.mY = -1. * (aHBPos[index + aWritten].y_advance * fontsize) / 64.;
 
       if (em && (em->mRange.mStart < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster;
+        uint32_t cluster = aHBInfo[aWritten + index].cluster + aDocumentOffset;
         if ((em->mRange.mStart) <= cluster &&
             cluster < (em->mRange.mEnd)) {
           rect_t emRect(point_t(aRect.mEnd.mX, origin.mY),
@@ -1111,11 +1131,11 @@ printLine(Font* aFont, cairo_t* aCa,
 
 
   if (isInRuby) {
-    bool dev = (tmpDataOffset != ruby->mRange.mEnd);
+    bool dev = (tmpDataOffset != ruby->mRange.mEnd - aDocumentOffset);
     double ratio = 0.;
     uint32_t length = ruby->mRange.length();
     if (dev && length) {
-      uint32_t left = ruby->mRange.mEnd - tmpDataOffset;
+      uint32_t left = ruby->mRange.mEnd - tmpDataOffset - aDocumentOffset;
       ratio = double(left) / double(length);
     }
 
@@ -1206,41 +1226,11 @@ public:
   }
 };
 
-// @return false  If there's no room in this rectangle to draw a new glyph.
-bool printString(Font* aFont, const Page& aPage,
-                 const std::string& aString, KihonHanmen& aKihonHanmen,
-                 const double aLineGap, point_t& aOffset, 
-                 RubyList*& aRuby, Font* aRubyFont, SelectionList*& aEm,
-                 const char* aSVGPath) {
-
-  SVGFileNameProvider svgFile(aSVGPath);
-  cairo_surface_t* cs;
-  if (aSVGPath) {
-    cs = cairo_svg_surface_create(svgFile.get(),
-                                  aPage.outerRect().width(),
-                                  aPage.outerRect().height());
-  }
-  else {
-    cs = cairo_pdf_surface_create_for_stream(caStdout, nullptr,
-                                             aPage.outerRect().width(),
-                                             aPage.outerRect().height());
-  }
-
-  cairo_surface_set_fallback_resolution(cs, 72., 72.);
-
-  cairo_t* ca = cairo_create(cs);
-  const double fontsize = aFont->mSize;
-  
-  rect_t columnRect;
-  bool isLastColumn = aKihonHanmen.provide(columnRect);
-
-  rect_t lineRect;
-  getVerticalLineRect(columnRect, aOffset, fontsize, lineRect);
-  lineState state = (columnRect.mStart.mX <= lineRect.mStart.mX)?
-                      LINE_STATE_NEW_LINE : LINE_STATE_END_OF_COLUMN;
-
-  point_t delta(0., 0.);
-
+void printParagraph(std::string& parentDocument, Font* aFont, Font* aRubyFont,
+                    SVGFileNameProvider* aSVGFile, KihonHanmen& aKihonHanmen,
+                    cairo_surface_t*& cs, cairo_t*& ca, const rect_t& aPageRect,
+                    const double aLineGap, RubyList* aRuby, SelectionList* aEM,
+                    point_t& aOffset, uint32_t aDocumentOffset) {
   aFont->resize();
   hb_buffer_t* buff = hb_buffer_create();
 
@@ -1248,11 +1238,10 @@ bool printString(Font* aFont, const Page& aPage,
   hb_buffer_set_direction(buff, HB_DIRECTION_TTB);
   hb_buffer_set_language(buff, hb_language_from_string("en", -1));
 
-  hb_buffer_add_utf8(buff, aString.c_str(), -1, 0, -1);
+  hb_buffer_add_utf8(buff, parentDocument.c_str(), -1, 0, -1);
   hb_buffer_guess_segment_properties(buff);
   hb_shape(aFont->mHBFont, buff, nullptr, 0);
 
-  // Step 1. Estimate
 
   uint32_t glyphLength(0);
   uint32_t glyphWritten(0);
@@ -1260,6 +1249,16 @@ bool printString(Font* aFont, const Page& aPage,
   hb_glyph_position_t* hbPos =
     hb_buffer_get_glyph_positions(buff, &glyphLength);
   glyphLength--; // We don't want to render the last glyph.
+
+  point_t delta(0., 0.);
+
+  rect_t columnRect;
+  bool isLastColumn = aKihonHanmen.provide(columnRect);
+
+  rect_t lineRect;
+  getVerticalLineRect(columnRect, aOffset, aFont->mSize, lineRect);
+  lineState state = (columnRect.mStart.mX <= lineRect.mStart.mX)?
+                      LINE_STATE_NEW_LINE : LINE_STATE_END_OF_COLUMN;
 
   int _loopcount(0);
   for (;;) {
@@ -1279,7 +1278,7 @@ bool printString(Font* aFont, const Page& aPage,
 
     case LINE_STATE_END_OF_COLUMN:
       if (isLastColumn) {
-        if (!aSVGPath) {
+        if (!aSVGFile) {
           cairo_show_page(ca);
         }
         else {
@@ -1287,36 +1286,36 @@ bool printString(Font* aFont, const Page& aPage,
           cairo_surface_flush(cs);
           cairo_surface_destroy(cs);
 
-          cs = cairo_svg_surface_create(svgFile.get(),
-                                        aPage.outerRect().width(),
-                                        aPage.outerRect().height());
+          cs = cairo_svg_surface_create(aSVGFile->get(),
+                                        aPageRect.width(),
+                                        aPageRect.height());
           cairo_surface_set_fallback_resolution(cs, 72., 72.);
           ca = cairo_create(cs);
         }
       }
       isLastColumn = aKihonHanmen.provide(columnRect);
       aOffset = point_t(0, 0);
-      getVerticalLineRect(columnRect, aOffset, fontsize, lineRect);
+      getVerticalLineRect(columnRect, aOffset, aFont->mSize, lineRect);
       state = LINE_STATE_NEW_LINE;
       break;
 
     case LINE_STATE_HARD_LINEBREAK:
     case LINE_STATE_SOFT_LINEBREAK:
-      insertVerticalLineBreak(columnRect, fontsize, aLineGap, aOffset);
-      getVerticalLineRect(columnRect, aOffset, fontsize, lineRect);
+      insertVerticalLineBreak(columnRect, aFont->mSize, aLineGap, aOffset);
+      getVerticalLineRect(columnRect, aOffset, aFont->mSize, lineRect);
       state = (columnRect.mStart.mX <= lineRect.mStart.mX)?
                 LINE_STATE_NEW_LINE : LINE_STATE_END_OF_COLUMN;
       break;
 
     case LINE_STATE_NEW_LINE:
-      state = printLine(aFont, ca, aString, hbInfo, hbPos, glyphLength,
-                        glyphWritten, lineRect, delta, aRuby,
-                        aRubyFont, aEm);
+      state = printLine(aFont, ca, parentDocument, hbInfo, hbPos, glyphLength,
+                        glyphWritten, aDocumentOffset, lineRect, delta, aRuby,
+                        aRubyFont, aEM);
       cairo_surface_flush(cs);
       aOffset += delta;
 #ifdef DEBUG
       std::cerr << "Left:" << std::endl 
-                << (aString.c_str() + hbInfo[glyphWritten].cluster)
+                << (parentDocument.c_str() + hbInfo[glyphWritten].cluster)
                 << std::endl;
       dumpPoint (delta);
 #endif
@@ -1328,7 +1327,75 @@ bool printString(Font* aFont, const Page& aPage,
   BREAKLOOP:
 
   hb_buffer_destroy(buff);
+}
 
+// @return false  If there's no room in this rectangle to draw a new glyph.
+void printString(Font* aFont, const Page& aPage,
+                 std::string& aString, KihonHanmen& aKihonHanmen,
+                 const double aLineGap, Font* aRubyFont,
+                 const char* aSVGPath) {
+  point_t offset(0., 0.);
+
+  RubyList* ruby = nullptr;
+  SelectionList* em = nullptr;
+  TextPropertyList* tp = new azlayout::TextPropertyList();
+  std::string parentDocument = "";
+  parseStrictAozora2(aString, parentDocument, tp, ruby, em);
+
+#ifdef DEBUG
+  {
+    TextPropertyList* tp2 = tp;
+    std::string buff;
+    while (tp2) {
+      if (tp2->mProgression == azlayout::TEXT_PROPERTY_HORIZONTAL) {
+        buff = "";
+        buff.append(parentDocument.c_str() + tp2->mRange.mStart,
+                    tp2->mRange.length());
+        std::cerr << buff;
+      }
+      tp2 = tp2->mNext;
+    }
+  }
+#endif
+
+  SVGFileNameProvider svgFile(aSVGPath);
+  cairo_surface_t* cs;
+  if (aSVGPath) {
+    cs = cairo_svg_surface_create(svgFile.get(),
+                                  aPage.outerRect().width(),
+                                  aPage.outerRect().height());
+  }
+  else {
+    cs = cairo_pdf_surface_create_for_stream(caStdout, nullptr,
+                                             aPage.outerRect().width(),
+                                             aPage.outerRect().height());
+  }
+
+  cairo_surface_set_fallback_resolution(cs, 72., 72.);
+
+  cairo_t* ca = cairo_create(cs);
+#if 0
+  while (tp) {
+    std::string fragment = "";
+    uint32_t documentOffset = tp->mRange.mStart;
+    fragment.append(parentDocument.c_str() + documentOffset, tp->mRange.length());
+    fragment += "\n"; 
+    printParagraph(fragment, aFont, aRubyFont,
+                   (aSVGPath)? &svgFile: nullptr, aKihonHanmen,
+                   cs, ca, aPage.outerRect(),
+                   aLineGap, ruby, em,
+                   offset, documentOffset);
+    tp = tp->mNext;
+  }
+#else
+  {
+    printParagraph(parentDocument, aFont, aRubyFont,
+                   (aSVGPath)? &svgFile: nullptr, aKihonHanmen,
+                   cs, ca, aPage.outerRect(),
+                   aLineGap, ruby, em,
+                   offset, 0);
+  }
+#endif
   cairo_show_page(ca);
   cairo_destroy(ca);
 
@@ -1338,7 +1405,7 @@ bool printString(Font* aFont, const Page& aPage,
   if (aSVGPath) {
     svgFile.outputJSON();
   }
-  return true;
+  return;
 }
 } // azlayout
 
@@ -1485,20 +1552,13 @@ int main (int argc, char* argv[]) {
   azlayout::Page page(width, height,
                       marginLeft, marginTop, marginRight, marginBottom);
   azlayout::KihonHanmen kihonHanmen(page.innerRect(), columnGap, columns);
-
-  azlayout::point_t offset(0., 0.);
-
-  azlayout::RubyList* ruby = nullptr;
-  azlayout::SelectionList* em = nullptr;
-  std::string parentDocument = "";
-  azlayout::parseStrictAozora2(rawUTF8Data, parentDocument, ruby, em);
  
   {
-    azlayout::Font serif(fontface, ftlib, fontsize);
+    azlayout::Font docFont(fontface, ftlib, fontsize);
     azlayout::Font rubyFont(rubyfontface, ftlib, (fontsize * rubysize));
 
-    printString(&serif, page, parentDocument,
-                kihonHanmen, lineGap, offset, ruby, &rubyFont, em, svgpath);
+    printString(&docFont, page, rawUTF8Data,
+                kihonHanmen, lineGap, &rubyFont, svgpath);
   }
 
   FT_Done_FreeType(ftlib);

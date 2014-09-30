@@ -1,0 +1,8 @@
+
+property getProperty(const unsigned int aUnicodeCodePoint) {
+  const Item key({aUnicodeCodePoint, aUnicodeCodePoint, U});
+  void* found = bsearch(&key, gTable, gCount, sizeof(Item), compare);
+  return static_cast<const Item*>(found)->mProperty;
+}
+
+} //namespace utr50

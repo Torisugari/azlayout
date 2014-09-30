@@ -78,6 +78,15 @@ configure_file("${PROJECT_SOURCE_DIR}/src/demo.sh.in"
 
 ADD_CUSTOM_TARGET(demo /bin/bash demo.sh)
 
+configure_file("${PROJECT_SOURCE_DIR}/src/vo/vo.sh.in"
+               vo.sh)
+
+configure_file("${PROJECT_SOURCE_DIR}/src/vo/vo.js.in"
+               vo.js)
+
+ADD_CUSTOM_TARGET(vo /bin/bash vo.sh)
+
 add_executable(azlayout
-               src/main.cpp)
+               src/main.cpp
+               src/vo/utr50.cpp)
 
