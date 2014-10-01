@@ -1,10 +1,17 @@
 #/bin/bash
 # Replace some annotations with UTF-8 strings.
-${PROJECT_SOURCE_DIR}
 python ${PROJECT_SOURCE_DIR}/src/translate.py < ${PROJECT_SOURCE_DIR}/src/example.txt > tmp.txt
 
 # 4.0 inch smartphone's screen w:h = 9:16 (9 / 16 = 0.5625)
 ${PROJECT_BINARY_DIR}/azlayout -size 4.0 -ratio 0.5625 -fontsize 12.0 -FontFace IPAexMincho  < tmp.txt > ${PROJECT_SOURCE_DIR}/../gh-pages/demo/4inch.pdf
+
+mkdir -p ${PROJECT_SOURCE_DIR}/../gh-pages/demo/4inch
+rm -f ${PROJECT_SOURCE_DIR}/../gh-pages/demo/4inch/*.svg
+rm -f ${PROJECT_SOURCE_DIR}/../gh-pages/demo/4inch/*.html
+cp ${PROJECT_SOURCE_DIR}/src/html/*.html ${PROJECT_SOURCE_DIR}/../gh-pages/demo/4inch/ 
+${PROJECT_BINARY_DIR}/azlayout -size 4.0 -ratio 0.5625 -fontsize 12.0 -FontFace IPAexMincho -svgpath ${PROJECT_SOURCE_DIR}/../gh-pages/demo/4inch/ < tmp.txt
+mv error.txt ${PROJECT_SOURCE_DIR}/../gh-pages/demo/4inch/
+
 
 # A4 papersize and 2 columns (2段組み)
 mkdir -p ${PROJECT_SOURCE_DIR}/../gh-pages/demo/A4
@@ -12,5 +19,5 @@ rm -f ${PROJECT_SOURCE_DIR}/../gh-pages/demo/A4/*.svg
 rm -f ${PROJECT_SOURCE_DIR}/../gh-pages/demo/A4/*.html
 cp ${PROJECT_SOURCE_DIR}/src/html/*.html ${PROJECT_SOURCE_DIR}/../gh-pages/demo/A4/ 
 ${PROJECT_BINARY_DIR}/azlayout -height 841.89 -width 595.2756 -marginTop 32.0 -margin Bottom 32.0 -FontFace IPAexMincho -columns 2 -svgpath ${PROJECT_SOURCE_DIR}/../gh-pages/demo/A4/ < tmp.txt
-mv error.txt ${PROJECT_SOURCE_DIR}/../gh-pages/demo/
+mv error.txt ${PROJECT_SOURCE_DIR}/../gh-pages/demo/A4/
 rm tmp.txt

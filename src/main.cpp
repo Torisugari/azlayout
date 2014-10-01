@@ -185,20 +185,23 @@ public:
     }
   }
 
-  bool provide(rect_t& aFace, bool aAutoFeed = true) {
+  bool currentColumn(rect_t& aFace) const {
     aFace = mColumns[mIndex];
-#ifdef DEBUG
-    std::cerr << ".width(): " << aFace.width() << " .height() " 
-              << aFace.height() << "\n";
-#endif
-    mIndex++;
-    bool isLastColumn = (mColumns.size() == mIndex);
+    return isLastColumn();
+  }
 
-    if (aAutoFeed && isLastColumn) {
+  bool isLastColumn() const {
+    return mColumns.size() - 1 == mIndex;
+  }
+
+  bool newColumn(rect_t& aFace) {
+    if (isLastColumn()) {
       mIndex = 0;
     }
-
-    return isLastColumn;
+    else {
+      mIndex++;
+    }
+    return currentColumn(aFace);
   }
 
   void feed() {
@@ -292,6 +295,7 @@ void dumpcairo(cairo_t* aC, int aLine, const char* aInfo = _kDummyDumpcairo) {
 // @return false  If there's no room in this rectangle to draw a new glyph.
 
 enum lineState {
+  LINE_STATE_CONTINUE_LINE   = 0,// Start with previous line.
   LINE_STATE_NEW_LINE        = 1,// We don't know anything. Just a initial state.
   LINE_STATE_SOFT_LINEBREAK,     // Linebreak because of too long to render.
   LINE_STATE_HARD_LINEBREAK,     // Linebreak because of '\n', '\r' "<br>" etc.
@@ -329,7 +333,7 @@ enum progressionProperty {
   TEXT_PROPERTY_DEFAULT = 0, // Too little infomation to decide.
   TEXT_PROPERTY_VERTICAL,    // No rotation.
   TEXT_PROPERTY_HORIZONTAL,  // Rotate 90deg clockwise.
-  TEXT_PROPERTY_TATENAKAYOKO // kainda ligature, 2 halfwidth makes 1 fullwidth.
+  TEXT_PROPERTY_TATECHUYOKO // kainda ligature, 2 halfwidth makes 1 fullwidth.
 };
 
 enum connectionProperty {
@@ -464,6 +468,7 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
   std::string tag("");
 
   int32_t ligIndex = - 1;
+  int32_t rotatedLength(0);
 
   uint32_t i;
   for (i = 0; i < glyphlen; i++) {
@@ -531,7 +536,7 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
       }
       break;
     case uint32_t('!'):  // '!'
-        // XXX we should do Tatenakayoko instead of ligature.
+        // XXX we should do TATECHUYOKO instead of ligature.
         if (uint32_t('!') == hbInfo[i + 1].codepoint) {
           ligIndex = 0;
         }
@@ -592,6 +597,7 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
             }
             j--;
           }
+          rotatedLength = j + 1 - i;
           tp->mRange.mEnd = pos;
           tp->mNext = new TextPropertyList();
           tp = tp->mNext;
@@ -603,6 +609,12 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
       case utr50::Tu:
       case utr50::U:
         if (0x0a !=hbInfo[i].codepoint && TEXT_PROPERTY_HORIZONTAL == tp->mProgression) {
+          if (rotatedLength < 2) {
+            tp->mProgression = TEXT_PROPERTY_VERTICAL;
+          }
+          else if (rotatedLength == 2) {
+            tp->mProgression = TEXT_PROPERTY_TATECHUYOKO;
+          }
           tp->mRange.mEnd = aParentDocument.size();
           tp->mNext = new TextPropertyList();
           tp = tp->mNext;
@@ -614,7 +626,8 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
       case utr50::Tr:
         break;
       }
-      if (TEXT_PROPERTY_VERTICAL == tp->mProgression && utr50::R == property) {
+      if (0x0a !=hbInfo[i].codepoint && TEXT_PROPERTY_HORIZONTAL == tp->mProgression) {
+        rotatedLength++;
       }
       aParentDocument.append(ptr, byteLen);
       notSelected += byteLen;
@@ -636,9 +649,11 @@ public:
   hb_font_t* mHBFont;
   cairo_font_face_t* mCAFont;
   double mSize;
+  orient mOrient;
+  hb_position_t mHOriginY;
   Font() {}
-  Font(const char* aFontName, FT_Library aFTLib, const double aSize) :
-    mSize(aSize) {
+  Font(const char* aFontName, FT_Library aFTLib, const double aSize, orient aOrient = kVertical) :
+    mSize(aSize), mOrient(aOrient), mHOriginY(0) {
 
     if (!aFontName || !(*aFontName)) {
       aFontName = "Serif";
@@ -653,7 +668,9 @@ public:
       FcDefaultSubstitute(pattern);
 
       FcResult fcResult;
-      FcPatternAddBool(pattern, FC_VERTICAL_LAYOUT, FcTrue);
+      if (kVertical == aOrient) {
+        FcPatternAddBool(pattern, FC_VERTICAL_LAYOUT, FcTrue);
+      }
       fcFont = FcFontMatch(nullptr, pattern, &fcResult);
       FcPatternDestroy(pattern);
 
@@ -683,8 +700,16 @@ public:
     FcPatternDestroy(fcFont);
 
     mHBFont = hb_ft_font_create(mFTHBFont, nullptr);
-    mCAFont = cairo_ft_font_face_create_for_ft_face(mFTCAFont, 
-                                                    FT_LOAD_VERTICAL_LAYOUT);
+    mCAFont = cairo_ft_font_face_create_for_ft_face
+               (mFTCAFont, (isVertical())? FT_LOAD_VERTICAL_LAYOUT : 0);
+    if (!isVertical()) {
+      resize();
+      hb_codepoint_t codepointM(0);
+      hb_font_get_glyph (mHBFont, hb_codepoint_t('M'), 0, &codepointM);
+      hb_position_t x;
+      hb_font_get_glyph_h_origin(mHBFont, codepointM, &x, &mHOriginY);
+      std::cerr <<"mHOriginY" << codepointM;
+    }
   }
 
   void resize() {
@@ -748,6 +773,9 @@ public:
                               mForbiddenLastGlyphs.end(), aCodepoint);
   }
 
+  bool isVertical () const {
+    return kVertical == mOrient;
+  }
   ~Font() {
     cairo_font_face_destroy(mCAFont);
     hb_font_destroy(mHBFont);
@@ -916,8 +944,9 @@ printLine(Font* aFont, cairo_t* aCa,
       state = LINE_STATE_HARD_LINEBREAK;
       break;
     }
-
-    int32_t tmp = totalAdvance + (aHBPos[aWritten + numGlyphs].y_advance * -1);
+    const hb_glyph_position_t& pos = aHBPos[aWritten + numGlyphs];
+    int32_t tmpAdvance = (aFont->isVertical())? (pos.y_advance * - 1) : pos.x_advance;
+    int32_t tmp = totalAdvance + tmpAdvance;
     
     if (maxAdvance < tmp) {
       break;
@@ -1040,42 +1069,54 @@ printLine(Font* aFont, cairo_t* aCa,
       clusterTotalLength += clusterLength;
       // Set ruby
       // XXX Reduce "if" statements.
-      if (ruby && (ruby->mRange.mStart < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster + aDocumentOffset;
+      if (ruby && (ruby->mRange.mStart - aDocumentOffset < tmpDataOffset)) {
+        uint32_t cluster = aHBInfo[aWritten + index].cluster;
         if (isInRuby) {
-          if (ruby->mRange.mEnd <= cluster) {
+          if (ruby->mRange.mEnd - aDocumentOffset <= cluster) {
             rubyRect.mEnd.mX = aRect.mEnd.mX + aRubyFont->mSize;
             rubyRect.mEnd.mY = origin.mY;
             isInRuby = false;
 
+#ifdef DEBUG
+          {
+            char buff[1024];
+            memcpy(buff, document + ruby->mRange.mStart - aDocumentOffset,
+                   ruby->mRange.length());
+            buff[ruby->mRange.length()] = char(0);
+            std::cerr << ruby->mRange.mEnd - aDocumentOffset << " ";
+            std::cerr << cluster << " " <<
+                         buff << " " << ruby->mData << "\n";
+          }
+#endif
             printRuby(aRubyFont, aCa, ruby->mData.c_str(), rubyRect);
             ruby = ruby->mNext;
+
           }
         }
       }
 
       // Set em
-      if (ruby && (ruby->mRange.mStart < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster + aDocumentOffset;
+      if (ruby && (ruby->mRange.mStart - aDocumentOffset < tmpDataOffset)) {
+        uint32_t cluster = aHBInfo[aWritten + index].cluster;
         if (!isInRuby) {
-          if (ruby->mRange.mStart <= cluster) {
+          if (ruby->mRange.mStart - aDocumentOffset <= cluster) {
             rubyRect.mStart = point_t(aRect.mEnd.mX, origin.mY);
             isInRuby = true;
           }
         }
       }
 
-      if (em && (em->mRange.mStart < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster + aDocumentOffset;
-        while (em && em->mRange.mEnd <= cluster) {
+      if (em && (em->mRange.mStart - aDocumentOffset < tmpDataOffset)) {
+        uint32_t cluster = aHBInfo[aWritten + index].cluster;
+        while (em && em->mRange.mEnd - aDocumentOffset <= cluster) {
           em = em->mNext;
-#ifdef DEBUG
+#if 0
           if (em) {
             char buff[1024];
-            memcpy(buff, document + em->mRange.mStart,
+            memcpy(buff, document + em->mRange.mStart - aDocumentOffset,
                    em->mRange.length());
             buff[em->mRange.length()] = char(0);
-            std::cerr << em->mRange.mEnd << "\n";
+            std::cerr << em->mRange.mEnd - aDocumentOffset << "\n";
             std::cerr << cluster << "\n";
             std::cerr << buff << "\n";
           }
@@ -1085,11 +1126,14 @@ printLine(Font* aFont, cairo_t* aCa,
       point_t advance;
       advance.mX = (aHBPos[index + aWritten].x_advance * fontsize) / 64.;
       advance.mY = -1. * (aHBPos[index + aWritten].y_advance * fontsize) / 64.;
+      if (!aFont->isVertical()) {
+        advance = point_t(advance.mY, advance.mX);
+      }
 
-      if (em && (em->mRange.mStart < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster + aDocumentOffset;
-        if ((em->mRange.mStart) <= cluster &&
-            cluster < (em->mRange.mEnd)) {
+      if (em && (em->mRange.mStart - aDocumentOffset < tmpDataOffset)) {
+        uint32_t cluster = aHBInfo[aWritten + index].cluster;
+        if ((em->mRange.mStart - aDocumentOffset) <= cluster &&
+            cluster < (em->mRange.mEnd - aDocumentOffset)) {
           rect_t emRect(point_t(aRect.mEnd.mX, origin.mY),
                         aRubyFont->mSize, advance.mY);
           printRuby(aRubyFont, aCa, u8R"(丶)", emRect);
@@ -1110,6 +1154,19 @@ printLine(Font* aFont, cairo_t* aCa,
 
     cairo_set_font_size(aCa, aFont->mSize);
     AZ_DUMP_CAIRO(aCa, "cairo_set_font_size");
+
+
+    if (!aFont->isVertical()) {
+      cairo_matrix_t mtx;
+      cairo_get_font_matrix(aCa, &mtx);
+      cairo_font_extents_t fe;
+      cairo_font_extents(aCa, &fe);
+      double originDelta = (fe.ascent * aFont->mSize)/ (fe.ascent + fe.descent);
+      cairo_matrix_t rtm ({0., mtx.xx, mtx.xx * -1., 0., (aFont->mSize / 2.) - originDelta, 0.});
+
+      cairo_set_font_matrix(aCa, &rtm);
+      AZ_DUMP_CAIRO(aCa, "cairo_set_font_size");
+    }
 
     cairo_show_text_glyphs(aCa, clusterStr, clusterTotalLength,
                            glyphbuffer, tempNumGlyphs,
@@ -1135,7 +1192,7 @@ printLine(Font* aFont, cairo_t* aCa,
     double ratio = 0.;
     uint32_t length = ruby->mRange.length();
     if (dev && length) {
-      uint32_t left = ruby->mRange.mEnd - tmpDataOffset - aDocumentOffset;
+      uint32_t left = ruby->mRange.mEnd - aDocumentOffset - tmpDataOffset;
       ratio = double(left) / double(length);
     }
 
@@ -1159,7 +1216,7 @@ printLine(Font* aFont, cairo_t* aCa,
   if (state == LINE_STATE_HARD_LINEBREAK) {
     aWritten++; // We haven't written line break yet.
   }
-  aDelta = previousOrigin - origin;
+  aDelta = origin - previousOrigin;
   aRuby = ruby;
   aEm = em;
 
@@ -1229,13 +1286,13 @@ public:
 void printParagraph(std::string& parentDocument, Font* aFont, Font* aRubyFont,
                     SVGFileNameProvider* aSVGFile, KihonHanmen& aKihonHanmen,
                     cairo_surface_t*& cs, cairo_t*& ca, const rect_t& aPageRect,
-                    const double aLineGap, RubyList* aRuby, SelectionList* aEM,
-                    point_t& aOffset, uint32_t aDocumentOffset) {
+                    const double aLineGap, RubyList*& aRuby, SelectionList*& aEM,
+                    point_t& aOffset, uint32_t aDocumentOffset, lineState aLineState) {
   aFont->resize();
   hb_buffer_t* buff = hb_buffer_create();
 
   hb_buffer_set_unicode_funcs(buff, hb_icu_get_unicode_funcs());
-  hb_buffer_set_direction(buff, HB_DIRECTION_TTB);
+  hb_buffer_set_direction(buff, (kVertical == aFont->mOrient)? HB_DIRECTION_TTB :HB_DIRECTION_LTR);
   hb_buffer_set_language(buff, hb_language_from_string("en", -1));
 
   hb_buffer_add_utf8(buff, parentDocument.c_str(), -1, 0, -1);
@@ -1250,25 +1307,27 @@ void printParagraph(std::string& parentDocument, Font* aFont, Font* aRubyFont,
     hb_buffer_get_glyph_positions(buff, &glyphLength);
   glyphLength--; // We don't want to render the last glyph.
 
-  point_t delta(0., 0.);
 
   rect_t columnRect;
-  bool isLastColumn = aKihonHanmen.provide(columnRect);
+  bool isLastColumn = aKihonHanmen.currentColumn(columnRect);
 
   rect_t lineRect;
+  lineState state;
   getVerticalLineRect(columnRect, aOffset, aFont->mSize, lineRect);
-  lineState state = (columnRect.mStart.mX <= lineRect.mStart.mX)?
-                      LINE_STATE_NEW_LINE : LINE_STATE_END_OF_COLUMN;
+  state = (columnRect.mStart.mX <= lineRect.mStart.mX)?
+             LINE_STATE_NEW_LINE : LINE_STATE_END_OF_COLUMN;
 
   int _loopcount(0);
   for (;;) {
 
 #ifdef DEBUG
+    std::cerr << "aOffset:";dumpPoint (aOffset);
+    std::cerr << "mStart:";dumpPoint (lineRect.mStart);std::cerr  << "\n";
     std::cerr << "state: "<< state << std::endl;
 #endif
 
     _loopcount++;
-    assert(_loopcount < 800000);
+    assert(_loopcount < 80000000);
 
     switch(state) {
     case LINE_STATE_TOO_SHORT_LINE:  // This implies given rect is abnormal.
@@ -1293,14 +1352,17 @@ void printParagraph(std::string& parentDocument, Font* aFont, Font* aRubyFont,
           ca = cairo_create(cs);
         }
       }
-      isLastColumn = aKihonHanmen.provide(columnRect);
+      isLastColumn = aKihonHanmen.newColumn(columnRect);
       aOffset = point_t(0, 0);
       getVerticalLineRect(columnRect, aOffset, aFont->mSize, lineRect);
       state = LINE_STATE_NEW_LINE;
       break;
 
-    case LINE_STATE_HARD_LINEBREAK:
     case LINE_STATE_SOFT_LINEBREAK:
+      if (glyphLength == glyphWritten) {
+        goto BREAKLOOP; // break switch(){} and for(){}.
+      }
+    case LINE_STATE_HARD_LINEBREAK:
       insertVerticalLineBreak(columnRect, aFont->mSize, aLineGap, aOffset);
       getVerticalLineRect(columnRect, aOffset, aFont->mSize, lineRect);
       state = (columnRect.mStart.mX <= lineRect.mStart.mX)?
@@ -1308,18 +1370,17 @@ void printParagraph(std::string& parentDocument, Font* aFont, Font* aRubyFont,
       break;
 
     case LINE_STATE_NEW_LINE:
+      point_t delta(0., 0.);
       state = printLine(aFont, ca, parentDocument, hbInfo, hbPos, glyphLength,
                         glyphWritten, aDocumentOffset, lineRect, delta, aRuby,
                         aRubyFont, aEM);
-      cairo_surface_flush(cs);
       aOffset += delta;
 #ifdef DEBUG
       std::cerr << "Left:" << std::endl 
                 << (parentDocument.c_str() + hbInfo[glyphWritten].cluster)
                 << std::endl;
-      dumpPoint (delta);
+      std::cerr << "delta:";dumpPoint (delta);std::cerr  << "\n";
 #endif
-      delta = point_t(0., 0.);
       break;
     }
   }
@@ -1330,7 +1391,7 @@ void printParagraph(std::string& parentDocument, Font* aFont, Font* aRubyFont,
 }
 
 // @return false  If there's no room in this rectangle to draw a new glyph.
-void printString(Font* aFont, const Page& aPage,
+void printString(Font* aFont, Font* aHFont, const Page& aPage,
                  std::string& aString, KihonHanmen& aKihonHanmen,
                  const double aLineGap, Font* aRubyFont,
                  const char* aSVGPath) {
@@ -1374,28 +1435,34 @@ void printString(Font* aFont, const Page& aPage,
   cairo_surface_set_fallback_resolution(cs, 72., 72.);
 
   cairo_t* ca = cairo_create(cs);
-#if 0
+
+  {
+    TextPropertyList* tp2 = tp;
+    while (tp2->mNext) {
+      if (tp2->mProgression == tp2->mNext->mProgression) {
+        tp2->mRange.mEnd = tp2->mNext->mRange.mEnd;
+        tp2->mNext = tp2->mNext->mNext;
+      }
+      else {
+        tp2 = tp2->mNext;
+      }
+    }
+  }
+
+
   while (tp) {
     std::string fragment = "";
     uint32_t documentOffset = tp->mRange.mStart;
     fragment.append(parentDocument.c_str() + documentOffset, tp->mRange.length());
-    fragment += "\n"; 
-    printParagraph(fragment, aFont, aRubyFont,
+    fragment += "a";
+    printParagraph(fragment, (TEXT_PROPERTY_HORIZONTAL == tp->mProgression)? aHFont :aFont, aRubyFont,
                    (aSVGPath)? &svgFile: nullptr, aKihonHanmen,
                    cs, ca, aPage.outerRect(),
                    aLineGap, ruby, em,
-                   offset, documentOffset);
+                   offset, documentOffset, LINE_STATE_CONTINUE_LINE);
     tp = tp->mNext;
   }
-#else
-  {
-    printParagraph(parentDocument, aFont, aRubyFont,
-                   (aSVGPath)? &svgFile: nullptr, aKihonHanmen,
-                   cs, ca, aPage.outerRect(),
-                   aLineGap, ruby, em,
-                   offset, 0);
-  }
-#endif
+
   cairo_show_page(ca);
   cairo_destroy(ca);
 
@@ -1554,10 +1621,11 @@ int main (int argc, char* argv[]) {
   azlayout::KihonHanmen kihonHanmen(page.innerRect(), columnGap, columns);
  
   {
-    azlayout::Font docFont(fontface, ftlib, fontsize);
+    azlayout::Font vFont(fontface, ftlib, fontsize);
+    azlayout::Font hFont(fontface, ftlib, fontsize, azlayout::kHorizontal);
     azlayout::Font rubyFont(rubyfontface, ftlib, (fontsize * rubysize));
 
-    printString(&docFont, page, rawUTF8Data,
+    printString(&vFont, &hFont, page, rawUTF8Data,
                 kihonHanmen, lineGap, &rubyFont, svgpath);
   }
 

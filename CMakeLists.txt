@@ -78,6 +78,11 @@ configure_file("${PROJECT_SOURCE_DIR}/src/demo.sh.in"
 
 ADD_CUSTOM_TARGET(demo /bin/bash demo.sh)
 
+configure_file("${PROJECT_SOURCE_DIR}/src/test.sh.in"
+               test.sh)
+
+ADD_CUSTOM_TARGET(test /bin/bash test.sh)
+
 configure_file("${PROJECT_SOURCE_DIR}/src/vo/vo.sh.in"
                vo.sh)
 

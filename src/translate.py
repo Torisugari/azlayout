@@ -22,8 +22,10 @@
 
 from string import maketrans
 import sys
-
+import re
 tmp = sys.stdin.read();
+
+tmp = re.sub(r"^([\s\S]+)\n---+\n[\s\S]+\n---+\n", "", tmp)
 
 dic = {
   "\r\n": "\n",
