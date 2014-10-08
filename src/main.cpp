@@ -329,6 +329,7 @@ struct RubyList : public SelectionList {
   RubyList* mNext;
 };
 
+
 enum progressionProperty {
   TEXT_PROPERTY_DEFAULT = 0, // Too little infomation to decide.
   TEXT_PROPERTY_VERTICAL,    // No rotation.
@@ -414,22 +415,85 @@ parseEmphasisTag(const std::string& aTag, SelectionList*& aSelection,
 
   return true;
 }
+void
+analizeDocumentRotation(std::string& aString, TextPropertyList* tp){
+  // instead of calling strlen add some meaningless codepoint at the end of
+  // the array.
+  aString += "\n";
+  hb_buffer_t* buff = hb_buffer_create();
+  hb_buffer_add_utf8(buff, aString.c_str(), -1, 0, -1);
+  aString.resize(aString.size() - 1);
+
+
+  uint32_t glyphlen;
+  hb_glyph_info_t* hbInfo = hb_buffer_get_glyph_infos(buff, &glyphlen);
+
+  // We know the last "\n" is dummy;
+  glyphlen--;
+#if 1
+  uint32_t rotatedLength(0);
+  uint32_t i;
+  for (i = 0; i < glyphlen; i++) {
+      utr50::property property = utr50::getProperty(hbInfo[i].codepoint);
+      switch (property) {
+      case utr50::R:
+        if (0x0a != hbInfo[i].codepoint &&
+            0x2026 != hbInfo[i].codepoint &&
+            0x2015 != hbInfo[i].codepoint &&
+            TEXT_PROPERTY_VERTICAL == tp->mProgression) {
+          uint32_t pos = hbInfo[i].cluster;
+          int j = i - 1;
+          while (j > -1 && utr50::Tr == utr50::getProperty(hbInfo[j].codepoint)) {
+            uint32_t length = hbInfo[j + 1].cluster - hbInfo[j].cluster;
+            if (pos >= length) {
+              pos -= length;
+            }
+            else {
+              break;
+            }
+            j--;
+          }
+          rotatedLength = j + 1 - i;
+          tp->mRange.mEnd = pos;
+          tp->mNext = new TextPropertyList();
+          tp = tp->mNext;
+          tp->mNext = nullptr;
+          tp->mRange.mStart = pos;
+          tp->mProgression = TEXT_PROPERTY_HORIZONTAL;
+        }
+        break;
+      case utr50::Tu:
+      case utr50::U:
+        if (0x0a !=hbInfo[i].codepoint && TEXT_PROPERTY_HORIZONTAL == tp->mProgression) {
+          if (rotatedLength < 2) {
+            tp->mProgression = TEXT_PROPERTY_VERTICAL;
+          }
+          else if (rotatedLength == 2) {
+            tp->mProgression = TEXT_PROPERTY_TATECHUYOKO;
+          }
+          tp->mRange.mEnd = hbInfo[i].cluster;
+          tp->mNext = new TextPropertyList();
+          tp = tp->mNext;
+          tp->mNext = nullptr;
+          tp->mRange.mStart = hbInfo[i].cluster;
+          tp->mProgression = TEXT_PROPERTY_VERTICAL;
+        }
+        break;
+      case utr50::Tr:
+        break;
+      }
+      if (0x0a !=hbInfo[i].codepoint && TEXT_PROPERTY_HORIZONTAL == tp->mProgression) {
+        rotatedLength++;
+      }
+  }
+#endif
+  hb_buffer_destroy(buff);
+}
 
 void
 parseStrictAozora2(std::string& aString, std::string& aParentDocument,
                    TextPropertyList* aTP,
                    RubyList*& aRuby, SelectionList*& aEm) {
-
-  //case 0x0000FF5C: // '｜';
-  //case 0x0000300A: // '《'; [0xE3, 0x80, 0x8A, 0x00]
-  //case 0x0000300B: // '》'; [0xE3, 0x80, 0x8B, 0x00]
-  //case 0x0000FF3B: // '［'; [0xef, 0xbc, 0xbb, 0x00]
-  //case 0x0000FF3D: // '］'; [0xef, 0xbc, 0xbd, 0x00]
-  //case 0x0000FF03: // '＃';
-  //case 0x0000FF01: // '！';
-  //case 0x0000FF1F: // '？';
-  //case 0x00002049: // '⁉';
-  //case 0x0000203C: // '‼';
 
   TextPropertyList* tp = aTP;
   tp->mNext = nullptr;
@@ -468,7 +532,6 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
   std::string tag("");
 
   int32_t ligIndex = - 1;
-  int32_t rotatedLength(0);
 
   uint32_t i;
   for (i = 0; i < glyphlen; i++) {
@@ -576,59 +639,6 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
       // To do ... what?
     }
     else {
-      utr50::property property = utr50::getProperty(hbInfo[i].codepoint);
-      switch (property) {
-      case utr50::R:
-        if (0x0a != hbInfo[i].codepoint &&
-            0x2026 != hbInfo[i].codepoint &&
-            0x2015 != hbInfo[i].codepoint &&
-            TEXT_PROPERTY_VERTICAL == tp->mProgression) {
-          uint32_t pos = aParentDocument.size();
-          int j = i - 1;
-          while (j > -1 && utr50::Tr == utr50::getProperty(hbInfo[j].codepoint)) {
-            uint32_t length = hbInfo[j + 1].cluster - hbInfo[j].cluster;
-            if (pos >= length &&
-                0 == strncmp(aString.c_str() + hbInfo[j].cluster,
-                             aParentDocument.c_str() + pos - length, length)) {
-              pos -= length;
-            }
-            else {
-              break;
-            }
-            j--;
-          }
-          rotatedLength = j + 1 - i;
-          tp->mRange.mEnd = pos;
-          tp->mNext = new TextPropertyList();
-          tp = tp->mNext;
-          tp->mNext = nullptr;
-          tp->mRange.mStart = pos;
-          tp->mProgression = TEXT_PROPERTY_HORIZONTAL;
-        }
-        break;
-      case utr50::Tu:
-      case utr50::U:
-        if (0x0a !=hbInfo[i].codepoint && TEXT_PROPERTY_HORIZONTAL == tp->mProgression) {
-          if (rotatedLength < 2) {
-            tp->mProgression = TEXT_PROPERTY_VERTICAL;
-          }
-          else if (rotatedLength == 2) {
-            tp->mProgression = TEXT_PROPERTY_TATECHUYOKO;
-          }
-          tp->mRange.mEnd = aParentDocument.size();
-          tp->mNext = new TextPropertyList();
-          tp = tp->mNext;
-          tp->mNext = nullptr;
-          tp->mRange.mStart = aParentDocument.size();
-          tp->mProgression = TEXT_PROPERTY_VERTICAL;
-        }
-        break;
-      case utr50::Tr:
-        break;
-      }
-      if (0x0a !=hbInfo[i].codepoint && TEXT_PROPERTY_HORIZONTAL == tp->mProgression) {
-        rotatedLength++;
-      }
       aParentDocument.append(ptr, byteLen);
       notSelected += byteLen;
     }
@@ -639,8 +649,10 @@ parseStrictAozora2(std::string& aString, std::string& aParentDocument,
   hb_buffer_destroy(buff);
   aRuby = firstRuby;
   aEm = firstEm;
+  analizeDocumentRotation(aParentDocument, tp);
   tp->mRange.mEnd = aParentDocument.size();
 }
+
 
 class Font {
 public:
@@ -1069,60 +1081,19 @@ printLine(Font* aFont, cairo_t* aCa,
       clusterTotalLength += clusterLength;
       // Set ruby
       // XXX Reduce "if" statements.
-      if (ruby && (ruby->mRange.mStart - aDocumentOffset < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster;
-        if (isInRuby) {
-          if (ruby->mRange.mEnd - aDocumentOffset <= cluster) {
-            rubyRect.mEnd.mX = aRect.mEnd.mX + aRubyFont->mSize;
-            rubyRect.mEnd.mY = origin.mY;
-            isInRuby = false;
-
-#ifdef DEBUG
-          {
-            char buff[1024];
-            memcpy(buff, document + ruby->mRange.mStart - aDocumentOffset,
-                   ruby->mRange.length());
-            buff[ruby->mRange.length()] = char(0);
-            std::cerr << ruby->mRange.mEnd - aDocumentOffset << " ";
-            std::cerr << cluster << " " <<
-                         buff << " " << ruby->mData << "\n";
-          }
-#endif
-            printRuby(aRubyFont, aCa, ruby->mData.c_str(), rubyRect);
-            ruby = ruby->mNext;
-
-          }
-        }
-      }
 
       // Set em
-      if (ruby && (ruby->mRange.mStart - aDocumentOffset < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster;
+      const uint32_t& glyphStartCluster = aHBInfo[aWritten + index].cluster;
+      const uint32_t& glyphEndCluster = aHBInfo[aWritten + index + 1].cluster;
+      if (ruby) {
         if (!isInRuby) {
-          if (ruby->mRange.mStart - aDocumentOffset <= cluster) {
+          if (ruby->mRange.mStart - aDocumentOffset <= glyphStartCluster) {
             rubyRect.mStart = point_t(aRect.mEnd.mX, origin.mY);
             isInRuby = true;
           }
         }
       }
 
-      if (em && (em->mRange.mStart - aDocumentOffset < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster;
-        while (em && em->mRange.mEnd - aDocumentOffset <= cluster) {
-          em = em->mNext;
-#if 0
-          if (em) {
-            char buff[1024];
-            memcpy(buff, document + em->mRange.mStart - aDocumentOffset,
-                   em->mRange.length());
-            buff[em->mRange.length()] = char(0);
-            std::cerr << em->mRange.mEnd - aDocumentOffset << "\n";
-            std::cerr << cluster << "\n";
-            std::cerr << buff << "\n";
-          }
-#endif
-        }
-      }
       point_t advance;
       advance.mX = (aHBPos[index + aWritten].x_advance * fontsize) / 64.;
       advance.mY = -1. * (aHBPos[index + aWritten].y_advance * fontsize) / 64.;
@@ -1131,9 +1102,8 @@ printLine(Font* aFont, cairo_t* aCa,
       }
 
       if (em && (em->mRange.mStart - aDocumentOffset < tmpDataOffset)) {
-        uint32_t cluster = aHBInfo[aWritten + index].cluster;
-        if ((em->mRange.mStart - aDocumentOffset) <= cluster &&
-            cluster < (em->mRange.mEnd - aDocumentOffset)) {
+        if ((em->mRange.mStart - aDocumentOffset) <= glyphStartCluster &&
+            glyphStartCluster < (em->mRange.mEnd - aDocumentOffset)) {
           rect_t emRect(point_t(aRect.mEnd.mX, origin.mY),
                         aRubyFont->mSize, advance.mY);
           printRuby(aRubyFont, aCa, u8R"(丶)", emRect);
@@ -1141,6 +1111,27 @@ printLine(Font* aFont, cairo_t* aCa,
       }
 
       origin += advance;
+
+      if (ruby) {
+        if (isInRuby) {
+          if (ruby->mRange.mEnd - aDocumentOffset <= glyphEndCluster) {
+            rubyRect.mEnd.mX = aRect.mEnd.mX + aRubyFont->mSize;
+            rubyRect.mEnd.mY = origin.mY;
+            isInRuby = false;
+
+            printRuby(aRubyFont, aCa, ruby->mData.c_str(), rubyRect);
+          }
+        }
+      }
+
+      if (ruby && ruby->mRange.mEnd - aDocumentOffset <= glyphEndCluster) {
+        ruby = ruby->mNext;
+      }
+
+      if (em && em->mRange.mEnd - aDocumentOffset <= glyphEndCluster) {
+        em = em->mNext;
+      }
+
 #ifdef DEBUG
       // Note that codepoint is 4bytes (i.e. UCS4) while fonts support
       // only 2-bytes index (0-65535).
@@ -1206,6 +1197,7 @@ printLine(Font* aFont, cairo_t* aCa,
     if (dev) {
       std::string replace = (ruby->mData.c_str() + rubyDataLength);
       ruby->mData = replace;
+      ruby->mRange.mStart = tmpDataOffset + aDocumentOffset;
     }
     else {
       ruby = ruby->mNext;
@@ -1368,7 +1360,7 @@ void printParagraph(std::string& parentDocument, Font* aFont, Font* aRubyFont,
       state = (columnRect.mStart.mX <= lineRect.mStart.mX)?
                 LINE_STATE_NEW_LINE : LINE_STATE_END_OF_COLUMN;
       break;
-
+    case LINE_STATE_CONTINUE_LINE:
     case LINE_STATE_NEW_LINE:
       point_t delta(0., 0.);
       state = printLine(aFont, ca, parentDocument, hbInfo, hbPos, glyphLength,

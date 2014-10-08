@@ -19,7 +19,7 @@
 アクセント分解についての詳細は下記URLを参照してください
 http://www.aozora.gr.jp/accent_separation.html
 -------------------------------------------------------
-本日は晴天で、｜1月《むづき》｜31日《みそか》Sundayです。(http://www.example.com/index.html)
+本日は晴天で、｜1月《むづき》｜31日《みそか》｜Sunday《日曜日》です。(http://www.example.com/index.html)｜KIX《関西国際空港》
 
 ［＃８字下げ］一［＃「一」は中見出し］
 
